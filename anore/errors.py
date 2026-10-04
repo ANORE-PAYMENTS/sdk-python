@@ -11,10 +11,8 @@
     └─ SignatureError           — webhook signature verification failed
 """
 
-
 class AnoreError(Exception):
     """Base class for all SDK errors."""
-
 
 class APIError(AnoreError):
     """The API responded with a non-2xx status."""
@@ -30,34 +28,26 @@ class APIError(AnoreError):
         rid = " (request_id=%s)" % self.request_id if self.request_id else ""
         return "anore: HTTP %s — %s%s" % (self.status, self.message, rid)
 
-
 class ValidationError(APIError):
     """400 — invalid request (amount/description/shopId/JSON)."""
-
 
 class AuthenticationError(APIError):
     """401 — missing or invalid API key / signature."""
 
-
 class ForbiddenError(APIError):
     """403 — shop blocked, or access denied."""
-
 
 class NotFoundError(APIError):
     """404 — shop or payment not found."""
 
-
 class ServerError(APIError):
     """5xx — something went wrong on anore's side."""
-
 
 class APIConnectionError(AnoreError):
     """Could not reach the API (network error / timeout), even after retries."""
 
-
 class SignatureError(AnoreError):
     """Webhook signature did not match the expected value."""
-
 
 def error_for_status(status, message, data=None, request_id=None):
     """Map an HTTP status to the most specific APIError subclass."""
