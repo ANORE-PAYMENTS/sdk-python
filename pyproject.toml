@@ -26,7 +26,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://anore.cc"
 Documentation = "https://anore.cc/docs"
-Source = "https://github.com/roditsya/sdk-python"
+Source = "https://github.com/anore-payments/sdk-python"
 
 [build-system]
 requires = ["setuptools>=61"]
