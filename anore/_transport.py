@@ -1,25 +1,44 @@
-"""Internal HTTP transport — stdlib urllib with retry/backoff on network errors.
+"""Internal HTTP transport — stdlib urllib with retry/backoff for GET requests.
 
 Not part of the public API; use AnoreClient instead.
 """
 
 import json
+import math
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
-from .errors import APIConnectionError, error_for_status
+from .errors import APIConnectionError, APIError, error_for_status
 
-USER_AGENT = "anore-python/1.0.0"
+USER_AGENT = "anore-python/1.2.0"
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 class Transport:
     def __init__(self, base_url, api_key, secret=None, timeout=30, max_retries=2):
-        self.base_url = base_url.rstrip("/")
+        base = urllib.parse.urlsplit(base_url)
+        if base.scheme not in ("http", "https") or not base.netloc or base.username or base.password or base.query or base.fragment:
+            raise ValueError("AnoreClient: base_url must be an HTTP(S) API URL without credentials, query or fragment")
+        path = base.path.rstrip("/")
+        if not path:
+            path = "/api/v1"
+        elif path == "/api":
+            path += "/v1"
+        self.base_url = urllib.parse.urlunsplit((base.scheme, base.netloc, path, "", ""))
         self.api_key = api_key
         self.secret = secret
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("AnoreClient: timeout must be > 0")
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise ValueError("AnoreClient: max_retries must be a nonnegative integer")
         self.timeout = timeout
         self.max_retries = max_retries
+        self._opener = urllib.request.build_opener(_NoRedirect())
 
     def request(self, method, path, body=None, sign=None):
         url = self.base_url + path
@@ -30,54 +49,55 @@ class Transport:
         }
         data = None
         if body is not None:
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            data = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
             headers["Content-Type"] = "application/json"
-            # optional request signing — server verifies Anore-Signature if present
+
             secret = sign if sign is not None else self.secret
             if secret:
                 import hashlib
                 import hmac
-                headers["Anore-Signature"] = hmac.new(
+                signature = hmac.new(
                     secret.encode("utf-8"), data, hashlib.sha256
                 ).hexdigest()
+                headers["X-ZPay-Signature"] = signature
 
-        last_err = None
-        # retry only transient failures: network errors + 5xx. POST is safe to
-        # retry here because payment creation has no server-side idempotency key
-        # yet — a duplicate is far less likely than a flaky-network false-negative,
-        # and only fires on connection errors, not on a received 4xx.
-        for attempt in range(self.max_retries + 1):
+        retries = self.max_retries if method == "GET" else 0
+
+        for attempt in range(retries + 1):
             try:
                 req = urllib.request.Request(url, data=data, headers=headers, method=method)
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    return self._parse(resp.read()), resp.headers
+                with self._opener.open(req, timeout=self.timeout) as resp:
+                    return self._parse(resp.read(), resp.status, True), resp.headers
             except urllib.error.HTTPError as e:
-                payload = self._parse(e.read())
+                payload = self._parse(e.read(), e.code, False)
                 rid = e.headers.get("X-Request-Id") if e.headers else None
-                if e.code >= 500 and attempt < self.max_retries:
-                    last_err = e
+                status = e.code
+                e.close()
+                if status >= 500 and attempt < retries:
                     time.sleep(self._backoff(attempt))
                     continue
-                msg = payload.get("message") or payload.get("error") or "request failed"
-                raise error_for_status(e.code, msg, data=payload, request_id=rid)
+                msg = payload.get("message") or payload.get("error")
+                if not isinstance(msg, str):
+                    msg = "request failed"
+                raise error_for_status(status, msg, data=payload, request_id=rid)
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                last_err = e
-                if attempt < self.max_retries:
+                if attempt < retries:
                     time.sleep(self._backoff(attempt))
                     continue
                 raise APIConnectionError("could not reach anore API: %s" % e)
-
-        raise APIConnectionError("could not reach anore API: %s" % last_err)
 
     @staticmethod
     def _backoff(attempt):
         return min(0.5 * (2 ** attempt), 4.0)
 
     @staticmethod
-    def _parse(raw_bytes):
-        if not raw_bytes:
-            return {}
+    def _parse(raw_bytes, status, success):
         try:
-            return json.loads(raw_bytes.decode("utf-8"))
+            payload = json.loads(raw_bytes.decode("utf-8"))
+            if isinstance(payload, dict):
+                return payload
         except (ValueError, UnicodeDecodeError):
-            return {"raw": raw_bytes.decode("utf-8", "replace")}
+            pass
+        if success:
+            raise APIError("API returned an invalid JSON object", status=status)
+        return {}

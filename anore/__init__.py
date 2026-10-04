@@ -12,8 +12,8 @@ Zero dependencies (stdlib only), Python 3.8+.
     print(status.status, status.paid)
 """
 
-from .client import AnoreClient
-from .models import Payment, WebhookEvent
+from .client import AnoreClient, DEFAULT_BASE_URL
+from .models import Balance, Payment, PaymentList, Payout, PayoutFees, PayoutRates, WebhookEvent
 from .webhooks import verify_webhook, parse_webhook
 from .errors import (
     AnoreError,
@@ -27,11 +27,17 @@ from .errors import (
     SignatureError,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "AnoreClient",
+    "DEFAULT_BASE_URL",
     "Payment",
+    "PaymentList",
+    "Balance",
+    "PayoutFees",
+    "PayoutRates",
+    "Payout",
     "WebhookEvent",
     "verify_webhook",
     "parse_webhook",
