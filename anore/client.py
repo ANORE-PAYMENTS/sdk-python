@@ -267,7 +267,7 @@ class AnoreClient:
 
 
 def _validate_idempotency_key(value, operation):
-    if not isinstance(value, str) or not 1 <= len(value) <= 128:
+    if not isinstance(value, str) or not value.strip() or len(value) > 128:
         raise ValueError("%s: idempotency_key must be a string of 1 to 128 characters" % operation)
 
 

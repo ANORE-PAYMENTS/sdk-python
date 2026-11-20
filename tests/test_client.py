@@ -167,6 +167,12 @@ class ClientTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 client.create_payment(10, "test", franchise=franchise)
 
+    def test_subscription_idempotency_key_is_validated_before_networking(self):
+        client = AnoreClient(api_key="key", base_url="http://127.0.0.1:9")
+        for key in ("", "   ", "x" * 129):
+            with self.assertRaises(ValueError):
+                client.create_subscription("plan", "customer", "buyer@example.com", key)
+
     def test_subscription_methods_preserve_idempotency_contract(self):
         def response(call, number):
             if call["path"] == "/api/v1/subscriptions/catalog":
