@@ -16,9 +16,14 @@ from anore import (  # noqa: E402
     DEFAULT_BASE_URL,
     Payout,
     PayoutFees,
+    PayoutList,
     PayoutRates,
     ServerError,
     SignatureError,
+    SubscriptionBinding,
+    SubscriptionCatalog,
+    SubscriptionCharge,
+    SubscriptionStatus,
     ValidationError,
     parse_webhook,
     verify_webhook,
@@ -95,6 +100,108 @@ class ClientTest(unittest.TestCase):
             "callbackUrl": "https://merchant.example/hook", "email": "customer@example.test"})
         expected = hmac.new(b"fixture-secret", call["raw"], hashlib.sha256).hexdigest()
         self.assertEqual(call["headers"]["X-ZPay-Signature"], expected)
+
+    def test_create_payment_sends_identity_and_franchise_as_whitelisted_objects(self):
+        fx = self.fixture(lambda call, n: (200, {"success": True, "id": "invoice", "paymentUrl": "https://pay.anore.cc/invoice"}))
+        fx.client().create_payment(
+            amount=10,
+            description="branch order",
+            user_identity={
+                "type": "telegram_id",
+                "value": "123456789",
+                "telegram_username": "@customer_name",
+            },
+            franchise={
+                "type": "telegram_bot",
+                "address": "@branch_bot",
+                "owner_telegram_id": "987654321",
+                "owner_telegram_username": "branch_owner",
+            },
+        )
+        call = fx.calls[0]
+        self.assertEqual(json.loads(call["raw"])["user_identity"], {
+            "type": "telegram_id",
+            "value": "123456789",
+            "telegram_username": "@customer_name",
+        })
+        self.assertEqual(json.loads(call["raw"])["franchise"], {
+            "type": "telegram_bot",
+            "address": "@branch_bot",
+            "owner_telegram_id": "987654321",
+            "owner_telegram_username": "branch_owner",
+        })
+        expected = hmac.new(b"fixture-secret", call["raw"], hashlib.sha256).hexdigest()
+        self.assertEqual(call["headers"]["X-ZPay-Signature"], expected)
+
+    def test_legacy_payment_payload_omits_new_context(self):
+        fx = self.fixture(lambda call, n: (200, {"success": True, "id": "invoice", "paymentUrl": "https://pay.anore.cc/invoice"}))
+        fx.client().create_payment(amount=10, description="legacy")
+        self.assertEqual(json.loads(fx.calls[0]["raw"]), {
+            "amount": 10,
+            "description": "legacy",
+            "currency": "rub",
+        })
+
+    def test_payment_context_is_validated_before_networking(self):
+        client = AnoreClient(api_key="key", base_url="http://127.0.0.1:9")
+        invalid_identities = [
+            [],
+            {"type": "phone", "value": "1"},
+            {"type": "telegram_id", "value": True},
+            {"type": "telegram_id", "value": "01"},
+            {"type": "email", "value": "buyer@example.com", "telegram_username": "buyer_name"},
+            {"type": "email", "value": "buyer@example.com", "extra": "no"},
+        ]
+        for identity in invalid_identities:
+            with self.assertRaises(ValueError):
+                client.create_payment(10, "test", user_identity=identity)
+        invalid_franchises = [
+            [],
+            {"type": "store", "address": "branch", "owner_telegram_id": "1"},
+            {"type": "website", "address": "http://branch.example", "owner_telegram_id": "1"},
+            {"type": "telegram_bot", "address": "bot", "owner_telegram_id": "1"},
+            {"type": "website", "address": "https://branch.example/path", "owner_telegram_id": "1"},
+            {"type": "website", "address": "https://branch.example", "owner_telegram_id": 0},
+        ]
+        for franchise in invalid_franchises:
+            with self.assertRaises(ValueError):
+                client.create_payment(10, "test", franchise=franchise)
+
+    def test_subscription_idempotency_key_is_validated_before_networking(self):
+        client = AnoreClient(api_key="key", base_url="http://127.0.0.1:9")
+        for key in ("", "   ", "x" * 129):
+            with self.assertRaises(ValueError):
+                client.create_subscription("plan", "customer", "buyer@example.com", key)
+
+    def test_subscription_methods_preserve_idempotency_contract(self):
+        def response(call, number):
+            if call["path"] == "/api/v1/subscriptions/catalog":
+                return 200, {"success": True, "shopIdRequired": True, "environment": "live", "shops": []}
+            if call["path"] == "/api/v1/subscriptions":
+                return 200, {"success": True, "subscriptionId": 42, "shopId": 7, "status": "binding_pending", "qrUrl": "https://qr.nspk.ru/x", "environment": "live"}
+            if call["path"] == "/api/v1/subscriptions/42/charges":
+                return 200, {"success": True, "subscriptionId": 42, "chargeId": "00000000-0000-0000-0000-000000000001", "status": "creating"}
+            return 200, {"success": True, "subscriptionId": 42, "shopId": 7, "planId": "plan", "planTitle": "Plan", "status": "active", "customerId": "customer", "customerEmail": "buyer@example.com", "amount": 10, "environment": "live"}
+
+        fx = self.fixture(response)
+        client = fx.client()
+        self.assertIsInstance(client.get_subscription_catalog(), SubscriptionCatalog)
+        binding = client.create_subscription("plan", "customer", "buyer@example.com", "binding-key", shop_id=7)
+        self.assertIsInstance(binding, SubscriptionBinding)
+        self.assertEqual(binding.qr_url, "https://qr.nspk.ru/x")
+        self.assertIsInstance(client.charge_subscription(42, "charge-key"), SubscriptionCharge)
+        self.assertIsInstance(client.get_subscription(42), SubscriptionStatus)
+        self.assertEqual(fx.calls[1]["headers"]["Idempotency-Key"], "binding-key")
+        self.assertEqual(fx.calls[2]["headers"]["Idempotency-Key"], "charge-key")
+        self.assertEqual(fx.calls[2]["raw"], b"")
+
+    def test_list_payouts_uses_cursor_pagination(self):
+        fx = self.fixture(lambda call, n: (200, {"shopId": 7, "limit": 25, "items": [{"id": "WD-1"}], "hasMore": True, "nextCursor": "next"}))
+        page = fx.client().list_payouts(shop_id=7, limit=25, cursor="opaque")
+        self.assertIsInstance(page, PayoutList)
+        self.assertEqual(page.next_cursor, "next")
+        self.assertEqual(list(page)[0].id, "WD-1")
+        self.assertEqual(fx.calls[0]["path"], "/api/v1/payouts?limit=25&shopId=7&cursor=opaque")
 
     def test_base_urls_do_not_duplicate_paths(self):
         self.assertEqual(DEFAULT_BASE_URL, "https://api.anore.cc/api/v1")
