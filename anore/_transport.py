@@ -12,7 +12,7 @@ import urllib.request
 
 from .errors import APIConnectionError, APIError, error_for_status
 
-USER_AGENT = "anore-python/1.2.0"
+USER_AGENT = "anore-python/1.3.0"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -40,17 +40,19 @@ class Transport:
         self.max_retries = max_retries
         self._opener = urllib.request.build_opener(_NoRedirect())
 
-    def request(self, method, path, body=None, sign=None):
+    def request(self, method, path, body=None, sign=None, headers=None):
         url = self.base_url + path
-        headers = {
+        request_headers = {
             "Authorization": "Bearer " + self.api_key,
             "User-Agent": USER_AGENT,
             "Accept": "application/json",
         }
+        if headers:
+            request_headers.update(headers)
         data = None
         if body is not None:
             data = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            request_headers["Content-Type"] = "application/json"
 
             secret = sign if sign is not None else self.secret
             if secret:
@@ -59,13 +61,13 @@ class Transport:
                 signature = hmac.new(
                     secret.encode("utf-8"), data, hashlib.sha256
                 ).hexdigest()
-                headers["X-ZPay-Signature"] = signature
+                request_headers["X-ZPay-Signature"] = signature
 
         retries = self.max_retries if method == "GET" else 0
 
         for attempt in range(retries + 1):
             try:
-                req = urllib.request.Request(url, data=data, headers=headers, method=method)
+                req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
                 with self._opener.open(req, timeout=self.timeout) as resp:
                     return self._parse(resp.read(), resp.status, True), resp.headers
             except urllib.error.HTTPError as e:

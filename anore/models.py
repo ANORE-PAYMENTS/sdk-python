@@ -435,6 +435,154 @@ class Payout(_Model):
         return self.raw.get("txHash")
 
 
+class PayoutList(_Model):
+    """Cursor-paginated payout history."""
+
+    __slots__ = ()
+
+    @property
+    def shop_id(self):
+        return self.raw.get("shopId")
+
+    @property
+    def limit(self):
+        return self.raw.get("limit")
+
+    @property
+    def payouts(self):
+        return [Payout(item) for item in self.raw.get("items", [])]
+
+    @property
+    def has_more(self):
+        return bool(self.raw.get("hasMore"))
+
+    @property
+    def next_cursor(self):
+        return self.raw.get("nextCursor")
+
+    def __iter__(self):
+        return iter(self.payouts)
+
+    def __len__(self):
+        return len(self.raw.get("items", []))
+
+
+class SubscriptionCatalog(_Model):
+    """Eligible shops and subscription plans."""
+
+    __slots__ = ()
+
+    @property
+    def shop_id_required(self):
+        return bool(self.raw.get("shopIdRequired"))
+
+    @property
+    def environment(self):
+        return self.raw.get("environment")
+
+    @property
+    def shops(self):
+        return self.raw.get("shops", [])
+
+
+class SubscriptionBinding(_Model):
+    """A newly created subscription binding QR."""
+
+    __slots__ = ()
+
+    @property
+    def subscription_id(self):
+        return self.raw.get("subscriptionId")
+
+    @property
+    def shop_id(self):
+        return self.raw.get("shopId")
+
+    @property
+    def status(self):
+        return self.raw.get("status")
+
+    @property
+    def qr_url(self):
+        return self.raw.get("qrUrl")
+
+    @property
+    def environment(self):
+        return self.raw.get("environment")
+
+
+class SubscriptionCharge(_Model):
+    """A recurring charge creation result."""
+
+    __slots__ = ()
+
+    @property
+    def subscription_id(self):
+        return self.raw.get("subscriptionId")
+
+    @property
+    def charge_id(self):
+        return self.raw.get("chargeId")
+
+    @property
+    def payment_id(self):
+        return self.raw.get("paymentId")
+
+    @property
+    def status(self):
+        return self.raw.get("status")
+
+
+class SubscriptionStatus(_Model):
+    """Safe normalized subscription state."""
+
+    __slots__ = ()
+
+    @property
+    def subscription_id(self):
+        return self.raw.get("subscriptionId")
+
+    @property
+    def shop_id(self):
+        return self.raw.get("shopId")
+
+    @property
+    def plan_id(self):
+        return self.raw.get("planId")
+
+    @property
+    def plan_title(self):
+        return self.raw.get("planTitle")
+
+    @property
+    def status(self):
+        return self.raw.get("status")
+
+    @property
+    def customer_id(self):
+        return self.raw.get("customerId")
+
+    @property
+    def customer_email(self):
+        return self.raw.get("customerEmail")
+
+    @property
+    def amount(self):
+        return self.raw.get("amount")
+
+    @property
+    def payment_method(self):
+        return self.raw.get("paymentMethod")
+
+    @property
+    def environment(self):
+        return self.raw.get("environment")
+
+    @property
+    def next_charge_at(self):
+        return self.raw.get("nextChargeAt")
+
+
 class WebhookEvent(_Model):
     """A parsed (and verified) webhook payload."""
 
